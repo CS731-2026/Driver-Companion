@@ -1,3 +1,8 @@
 /.vscode
 /.env
-/Dataset/datasets
+*/datasets
+/datasets
+*/facemesh_dataset
+/.idea
+*/emonet_output
+/emonet_output
