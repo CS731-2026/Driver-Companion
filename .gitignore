@@ -10,3 +10,5 @@
 /papers
 */__pycache__
 __pycache__
+*.arrow
+*.json

@@ -25,6 +25,15 @@ Dataset layout expected
     <ds>_<split>.npz   {"landmarks": (N,478,3), "labels": (N,),
                          "label_names": (...)}   [from converter script]
 
+The trainer auto-detects splits from the filename ("train" / "val" substrings),
+so both data sources below drop in with no code change:
+
+    Dataset/Dataset.py          AffectNet-HQ + RAF-DB (legacy)
+    Dataset/papers_dataset.py   CK+ (Köksal & Gumus 2025) + FER-2013
+                                (Goodfellow et al. 2013; cited in
+                                Jakhete & Kulkarni 2024 and Luan et al. 2025)
+                                — stratified 80/20 train/val split, fixed seed
+
 Usage
 -----
     # Train on all .npz files found under ./facemesh_dataset/
@@ -79,16 +88,18 @@ log = logging.getLogger(__name__)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ── Unified emotion label map ─────────────────────────────────────────────────
-# AffectNet (8 classes) and RAF-DB (7 classes) use different integer schemes.
-# We normalise both to this shared vocabulary. Any label not listed here is
-# dropped at load time (e.g. AffectNet's "contempt" if you want 7-class parity).
+# Different source datasets use different integer schemes and spellings:
+#   AffectNet-HQ (legacy)   8 classes, "anger"/"happy"/...
+#   RAF-DB        (legacy)  7 classes
+#   CK+           (papers)  7 classes incl. "contempt" (dropped here)
+#   FER-2013      (papers)  7 classes, "angry"/"sad"/...
+# We normalise everything to the shared 7-class Ekman vocabulary below.
+# Any label not listed in LABEL_REMAP is dropped at load time.
 UNIFIED_EMOTIONS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 NUM_CLASSES = len(UNIFIED_EMOTIONS)
 
-# Mapping from each dataset's label_names to the unified index.
-# Keys are lowercase; values are unified indices.
 LABEL_REMAP = {
-    # AffectNet spellings
+    # Covers AffectNet / FER-2013 / CK+ spellings
     "anger":    0, "angry":   0,
     "disgust":  1,
     "fear":     2,
@@ -96,7 +107,7 @@ LABEL_REMAP = {
     "neutral":  4,
     "sad":      5, "sadness":   5,
     "surprise": 6,
-    # contempt is intentionally omitted → dropped
+    # "contempt" intentionally absent → dropped to preserve 7-class parity
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
