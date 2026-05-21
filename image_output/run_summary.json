@@ -1,0 +1,23 @@
+{
+  "method": "image_mobilenet_v2",
+  "backbone": "mobilenet_v2",
+  "image_size": 224,
+  "best_val_acc": 0.9966869590425311,
+  "final_test_acc": 0.9966869590425311,
+  "final_weighted_f1": 0.0,
+  "datasets": [
+    "affectnet",
+    "rafdb"
+  ],
+  "hyperparams": {
+    "datasets": "",
+    "output": "/home/soshi/PycharmProjects/Driver-Companion/TrainVla/../image_output",
+    "backbone": "mobilenet_v2",
+    "image_size": 224,
+    "epochs": 25,
+    "batch": 64,
+    "lr": 0.0003,
+    "patience": 8,
+    "workers": 4
+  }
+}

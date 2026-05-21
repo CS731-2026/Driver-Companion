@@ -3,6 +3,10 @@
 */datasets
 /datasets
 */facemesh_dataset
+/facemesh_dataset
 /.idea
 */emonet_output
 /emonet_output
+/papers
+*/__pycache__
+__pycache__
