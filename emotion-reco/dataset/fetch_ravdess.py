@@ -39,7 +39,6 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import List
 
 import cv2
 from tqdm import tqdm

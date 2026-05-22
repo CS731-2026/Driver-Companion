@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from .features import build_pair_indices, sequence_features
-from .landmarks import SELECTED_LANDMARKS
+from .landmarks import PRESETS, get_landmark_config
 
 
 DEFAULT_LABELS = ["anger", "contempt", "disgust", "fear", "happy", "sadness", "surprise"]
@@ -38,10 +38,11 @@ def make_dataset(
     sequences_per_class: int,
     num_keyframes: int,
     seed: int,
+    selected: list[int],
+    pair_idx: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
-    L = len(SELECTED_LANDMARKS)
-    pair_idx = build_pair_indices()
+    L = len(selected)
 
     # One fixed "neutral" template and one fixed motion direction per class.
     neutral = rng.uniform(0, 1, size=(L, 2)).astype(np.float32)
@@ -73,12 +74,16 @@ def main() -> int:
     ap.add_argument("--num_keyframes", type=int, default=5)
     ap.add_argument("--labels", default=",".join(DEFAULT_LABELS),
                     help="Comma-separated class names")
+    ap.add_argument("--landmarks", type=int, default=61, choices=PRESETS,
+                    help="Landmark preset: 61, 122 or 250")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     labels = [s.strip() for s in args.labels.split(",") if s.strip()]
-    X, y = make_dataset(labels, args.sequences_per_class, args.num_keyframes, args.seed)
-    pair_idx = build_pair_indices()
+    selected, groups = get_landmark_config(args.landmarks)
+    pair_idx = build_pair_indices(groups, selected)
+    X, y = make_dataset(labels, args.sequences_per_class, args.num_keyframes,
+                        args.seed, selected, pair_idx)
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -87,6 +92,7 @@ def main() -> int:
         y=y,
         labels=np.array(labels),
         pair_idx=pair_idx,
+        selected_landmarks=np.array(selected, dtype=np.int32),
     )
     print(f"Wrote {out_path}  X={X.shape}  y={y.shape}  labels={labels}")
     print(f"Per-class counts: "

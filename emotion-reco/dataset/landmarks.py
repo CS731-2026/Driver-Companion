@@ -49,38 +49,123 @@ def ensure_model(path: Path = _MODEL_PATH) -> Path:
     return path
 
 
-# MediaPipe FaceMesh canonical indices grouped by facial region.
-# Indices below are the standard FaceMesh contour/landmark indices used widely
-# in the community; they cover the muscle locations referenced by the AU table
-# in the paper (eye, eyebrow, nose, mouth, lower jaw).
-LEFT_EYE = [33, 133, 159, 145, 158, 153, 160, 144]          # 8
-RIGHT_EYE = [263, 362, 386, 374, 385, 380, 387, 373]        # 8
-LEFT_EYEBROW = [70, 63, 105, 66, 107, 55, 65]               # 7
-RIGHT_EYEBROW = [336, 296, 334, 293, 300, 285, 295]         # 7
-NOSE = [1, 2, 98, 327, 168, 6, 197, 195, 5, 4]              # 10
-MOUTH = [78, 308, 13, 14, 82, 312, 87, 317, 95, 324,
-         88, 318, 81, 311, 80, 310]                          # 16
-LOWER_JAW = [152, 175, 199, 200, 18]                        # 5
+# ---------------------------------------------------------------------------
+# Landmark presets. The paper runs experiments with 61, 122 and 250 landmarks
+# selected manually from the 478 FaceMesh points. Each preset is a dict of the
+# seven facial regions; the five FACS categories (cat1..cat5) are derived from
+# those regions via `_facs_groups`.
+# ---------------------------------------------------------------------------
 
-# Total = 61, matching the "61 landmarks with AU grouping" experiment that the
-# paper reports as the best speed/accuracy tradeoff.
-SELECTED_LANDMARKS: List[int] = (
-    LEFT_EYE + RIGHT_EYE + LEFT_EYEBROW + RIGHT_EYEBROW
-    + NOSE + MOUTH + LOWER_JAW
-)
-assert len(SELECTED_LANDMARKS) == 61
-
-# Five FACS-derived categories. Each value is the list of FaceMesh indices that
-# belong to that category. Only landmark pairs from the same group are kept,
-# which reduces the C(61, 2)=1830 default pair count and acts as feature
-# selection.
-LANDMARK_GROUPS: Dict[str, List[int]] = {
-    "cat1": LEFT_EYE + LEFT_EYEBROW + RIGHT_EYE + RIGHT_EYEBROW,      # AU 1,2,3,4,5
-    "cat2": LEFT_EYE + RIGHT_EYE + NOSE,                              # AU 6
-    "cat3": LEFT_EYE + LEFT_EYEBROW + RIGHT_EYE + RIGHT_EYEBROW + NOSE,  # AU 7,9
-    "cat4": NOSE + MOUTH + LOWER_JAW,                                 # AU 12,14,15,16,23,26
-    "cat5": LEFT_EYE + RIGHT_EYE + NOSE + MOUTH,                      # AU 20
+# 61-landmark preset — curated, matches the paper's best speed/accuracy point.
+_REGIONS_61: Dict[str, List[int]] = {
+    "left_eye": [33, 133, 159, 145, 158, 153, 160, 144],
+    "right_eye": [263, 362, 386, 374, 385, 380, 387, 373],
+    "left_eyebrow": [70, 63, 105, 66, 107, 55, 65],
+    "right_eyebrow": [336, 296, 334, 293, 300, 285, 295],
+    "nose": [1, 2, 98, 327, 168, 6, 197, 195, 5, 4],
+    "mouth": [78, 308, 13, 14, 82, 312, 87, 317, 95, 324,
+              88, 318, 81, 311, 80, 310],
+    "lower_jaw": [152, 175, 199, 200, 18],
 }
+
+# Comprehensive preset (~253 landmarks) — dense FaceMesh coverage of every
+# region. The 250-landmark preset uses this in full; 122 evenly subsamples it.
+_REGIONS_FULL: Dict[str, List[int]] = {
+    "left_eye": [
+        33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246,
+        130, 247, 30, 29, 27, 28, 56, 190,
+        226, 113, 225, 224, 223, 222, 221, 189,
+        31, 228, 229, 230, 231, 232, 233, 244,
+        25, 110, 24, 23, 22, 26, 112, 243,
+    ],
+    "right_eye": [
+        263, 362, 382, 381, 380, 374, 373, 390, 249, 466, 388, 387, 386, 385, 384, 398,
+        359, 467, 260, 259, 257, 258, 286, 414,
+        446, 342, 445, 444, 443, 442, 441, 413,
+        261, 448, 449, 450, 451, 452, 453, 464,
+        255, 339, 254, 253, 252, 256, 341, 463,
+    ],
+    "left_eyebrow": [70, 63, 105, 66, 107, 46, 53, 52, 65, 55],
+    "right_eyebrow": [300, 293, 334, 296, 336, 276, 283, 282, 295, 285],
+    "nose": [
+        1, 2, 4, 5, 6, 19, 20, 94, 97, 98, 99, 125, 141, 164, 168, 195, 197, 326, 327, 328,
+        358, 48, 49, 64, 102, 131, 134, 220, 218, 219, 278, 279, 294, 331, 360, 363, 440, 438, 439, 115,
+    ],
+    "mouth": [
+        61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 185, 40, 39, 37, 0, 267, 269, 270, 409,
+        78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 191, 80, 81, 82, 13, 312, 311, 310, 415,
+        76, 77, 90, 180, 85, 16, 315, 404, 320, 307, 306, 292, 408, 304, 272, 271, 268, 12, 38, 41,
+        42, 183, 73, 74, 184,
+    ],
+    "lower_jaw": [
+        152, 175, 199, 200, 18, 83, 313, 172, 136, 150, 149, 176, 148, 377, 400, 378, 379, 365, 397,
+        288, 361, 323, 132, 58, 207, 206, 427, 411, 216, 436, 212, 432,
+    ],
+}
+
+PRESETS = (61, 122, 250)
+
+
+def _facs_groups(regions: Dict[str, List[int]]) -> Dict[str, List[int]]:
+    """Build the 5 FACS categories (paper Table 3) from the 7 facial regions."""
+    le, re = regions["left_eye"], regions["right_eye"]
+    lb, rb = regions["left_eyebrow"], regions["right_eyebrow"]
+    nose, mouth, jaw = regions["nose"], regions["mouth"], regions["lower_jaw"]
+    return {
+        "cat1": le + lb + re + rb,             # AU 1,2,3,4,5
+        "cat2": le + re + nose,                # AU 6
+        "cat3": le + lb + re + rb + nose,      # AU 7,9
+        "cat4": nose + mouth + jaw,            # AU 12,14,15,16,23,26
+        "cat5": le + re + nose + mouth,        # AU 20
+    }
+
+
+def _subsample_regions(regions: Dict[str, List[int]], target: int) -> Dict[str, List[int]]:
+    """Evenly thin each region so the deduped landmark total is near `target`."""
+    total = len({i for v in regions.values() for i in v})
+    if target >= total:
+        return {k: list(v) for k, v in regions.items()}
+    scale = target / total
+    out: Dict[str, List[int]] = {}
+    for key, members in regions.items():
+        keep = max(2, round(len(members) * scale))   # >=2 so the region forms pairs
+        if keep >= len(members):
+            out[key] = list(members)
+        else:
+            picks = np.linspace(0, len(members) - 1, keep).round().astype(int)
+            out[key] = [members[i] for i in sorted(set(picks.tolist()))]
+    return out
+
+
+def get_landmark_config(preset: int = 61) -> tuple[List[int], Dict[str, List[int]]]:
+    """Return (selected landmark indices, FACS groups) for a landmark preset.
+
+    preset 61  → curated 61-landmark set.
+    preset 122 → comprehensive set evenly thinned to ~122 landmarks.
+    preset 250 → full comprehensive set (~253 landmarks).
+    """
+    if preset == 61:
+        regions = _REGIONS_61
+    elif preset == 122:
+        regions = _subsample_regions(_REGIONS_FULL, 122)
+    elif preset == 250:
+        regions = _REGIONS_FULL
+    else:
+        raise ValueError(f"landmark preset must be one of {PRESETS}, got {preset}")
+    groups = _facs_groups(regions)
+    selected: List[int] = []
+    seen = set()
+    for members in regions.values():
+        for idx in members:
+            if idx not in seen:
+                seen.add(idx)
+                selected.append(idx)
+    return selected, groups
+
+
+# Module-level defaults = 61-landmark preset (keeps existing imports working).
+SELECTED_LANDMARKS, LANDMARK_GROUPS = get_landmark_config(61)
+assert len(SELECTED_LANDMARKS) == 61
 
 
 @dataclass
@@ -135,12 +220,19 @@ class FaceMeshDetector:
         face = result.face_landmarks[0]
         return np.array([(lm.x, lm.y, lm.z) for lm in face], dtype=np.float32)
 
-    def detect_selected(self, image_rgb: np.ndarray) -> Optional[np.ndarray]:
-        """Return only the 61 selected landmarks as (61, 2) in normalized coords."""
+    def detect_selected(
+        self, image_rgb: np.ndarray, selected: Optional[List[int]] = None
+    ) -> Optional[np.ndarray]:
+        """Return the selected landmarks as (L, 2) in normalized coords.
+
+        `selected` defaults to the 61-landmark preset; pass a different index
+        list (from `get_landmark_config`) for the 122/250 presets.
+        """
         pts = self.detect(image_rgb)
         if pts is None:
             return None
-        return pts[SELECTED_LANDMARKS, :2]
+        idx = SELECTED_LANDMARKS if selected is None else selected
+        return pts[idx, :2]
 
     def close(self) -> None:
         self._landmarker.close()

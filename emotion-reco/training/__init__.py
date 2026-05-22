@@ -1,2 +1,1 @@
-from .model import build_model
-from .config import TrainConfig
+"""ConvLSTM1D model, cross-validation training, and benchmarking."""

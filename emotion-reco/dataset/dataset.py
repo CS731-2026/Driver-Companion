@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Sequence, Tuple
 
 import numpy as np
 
@@ -31,12 +30,16 @@ IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
 
 @dataclass
-class Sequence:
+class FrameSequence:
+    """One expression sequence: an emotion label and its ordered frame paths."""
+
     label: str
-    frames: List[Path]
+    frames: list[Path]
 
 
-def discover_sequences(data_root: str | os.PathLike) -> Tuple[List[Sequence], List[str]]:
+def discover_sequences(
+    data_root: str | os.PathLike,
+) -> tuple[list[FrameSequence], list[str]]:
     """Walk the dataset root and return (sequences, sorted class list)."""
     root = Path(data_root)
     if not root.is_dir():
@@ -46,7 +49,7 @@ def discover_sequences(data_root: str | os.PathLike) -> Tuple[List[Sequence], Li
     if not labels:
         raise RuntimeError(f"No class subdirectories under {root}")
 
-    sequences: List[Sequence] = []
+    sequences: list[FrameSequence] = []
     for label in labels:
         for seq_dir in sorted((root / label).iterdir()):
             if not seq_dir.is_dir():
@@ -55,13 +58,13 @@ def discover_sequences(data_root: str | os.PathLike) -> Tuple[List[Sequence], Li
                 p for p in seq_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS
             )
             if len(frames) >= 2:
-                sequences.append(Sequence(label=label, frames=frames))
+                sequences.append(FrameSequence(label=label, frames=frames))
     if not sequences:
         raise RuntimeError(f"No sequences with >=2 frames under {root}")
     return sequences, labels
 
 
-def sample_keyframes(frames: Sequence[Path], k: int = 5) -> List[Path]:
+def sample_keyframes(frames: list[Path], k: int = 5) -> list[Path]:
     """Uniformly sample k frames from neutral to apex (inclusive on both ends)."""
     n = len(frames)
     if n <= k:
@@ -69,10 +72,3 @@ def sample_keyframes(frames: Sequence[Path], k: int = 5) -> List[Path]:
         return list(frames) + [frames[-1]] * (k - n)
     idx = np.linspace(0, n - 1, num=k).round().astype(int)
     return [frames[i] for i in idx]
-
-
-def iter_keyframes(
-    sequences: Sequence[Sequence], k: int = 5
-) -> Iterator[Tuple[str, List[Path]]]:
-    for s in sequences:
-        yield s.label, sample_keyframes(s.frames, k=k)

@@ -106,9 +106,16 @@ def main() -> int:
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
 
-    pair_idx = build_pair_indices()
+    # Landmark config is baked into the checkpoint by train.py — use it so the
+    # live feature pipeline matches the one the model was trained on. Older
+    # checkpoints without it fall back to the 61-landmark preset.
+    selected = ckpt.get("selected_landmarks")
+    pair_idx = ckpt.get("pair_idx")
+    pair_idx = build_pair_indices() if pair_idx is None else np.asarray(pair_idx)
     feat_dim = 2 * len(pair_idx)
     time_steps = args.buffer - 1
+    n_landmarks = len(selected) if selected is not None else 61
+    print(f"Model: {ckpt['num_classes']} classes, {n_landmarks} landmarks, A={feat_dim}")
 
     detector = FaceMeshDetector(
         static_image_mode=False,
@@ -136,7 +143,7 @@ def main() -> int:
             rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             now = time.time()
 
-            pts = detector.detect_selected(rgb)
+            pts = detector.detect_selected(rgb, selected=selected)
             if pts is not None:
                 h, w = rgb.shape[:2]
                 pts_px = pts.copy()

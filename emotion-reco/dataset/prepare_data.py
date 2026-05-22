@@ -26,7 +26,7 @@ from tqdm import tqdm
 
 from .dataset import discover_sequences, sample_keyframes
 from .features import build_pair_indices, sequence_features
-from .landmarks import FaceMeshDetector
+from .landmarks import PRESETS, FaceMeshDetector, get_landmark_config
 
 
 def load_rgb(path: Path) -> np.ndarray:
@@ -41,16 +41,21 @@ def main() -> int:
     ap.add_argument("--data_root", required=True, help="Root with one folder per class")
     ap.add_argument("--output", required=True, help="Destination .npz file")
     ap.add_argument("--num_keyframes", type=int, default=5)
+    ap.add_argument("--landmarks", type=int, default=61, choices=PRESETS,
+                    help="Landmark preset: 61, 122 or 250 (paper experiments)")
     args = ap.parse_args()
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    selected, groups = get_landmark_config(args.landmarks)
+    pair_idx = build_pair_indices(groups, selected)
+
     sequences, labels = discover_sequences(args.data_root)
     label_to_idx = {name: i for i, name in enumerate(labels)}
-    pair_idx = build_pair_indices()
     print(f"Found {len(sequences)} sequences across {len(labels)} classes: {labels}")
-    print(f"Landmark pairs: {len(pair_idx)}  →  feature dim A = {2 * len(pair_idx)}")
+    print(f"Landmark preset: {args.landmarks}  →  {len(selected)} landmarks, "
+          f"{len(pair_idx)} pairs, feature dim A = {2 * len(pair_idx)}")
 
     detector = FaceMeshDetector(static_image_mode=True)
 
@@ -65,7 +70,7 @@ def main() -> int:
             failed = False
             for frame_path in keyframes:
                 rgb = load_rgb(frame_path)
-                pts = detector.detect_selected(rgb)
+                pts = detector.detect_selected(rgb, selected=selected)
                 if pts is None:
                     failed = True
                     break
@@ -97,6 +102,7 @@ def main() -> int:
         y=y_arr,
         labels=np.array(labels),
         pair_idx=pair_idx,
+        selected_landmarks=np.array(selected, dtype=np.int32),
     )
     print(f"Saved {X_arr.shape[0]} sequences → {out_path}")
     print(f"X shape: {X_arr.shape}  y shape: {y_arr.shape}  (skipped {skipped})")

@@ -1,0 +1,9 @@
+# Generated artifacts
+cache/
+runs/
+data/
+models/
+
+# Python
+__pycache__/
+*.pyc

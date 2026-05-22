@@ -11,7 +11,7 @@ producing an (N-1, A) tensor where A = 2 * (#unique pairs across all groups).
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, Sequence, Tuple
 
 import numpy as np
 
