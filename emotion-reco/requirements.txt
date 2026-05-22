@@ -1,0 +1,7 @@
+numpy>=1.23
+opencv-python>=4.7
+mediapipe>=0.10
+scikit-learn>=1.2
+torch>=2.1
+tqdm>=4.65
+matplotlib>=3.6

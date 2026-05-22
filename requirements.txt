@@ -1,20 +1,7 @@
-torch
-torchvision
-numpy
-opencv-python
-Pillow
-tqdm
-
-# Dataset preprocessing
-mediapipe
-datasets
-huggingface_hub
-
-# Training + evaluation
-scikit-learn
-matplotlib
-seaborn
-
-# Benchmark logger
-psutil
-nvitop
+numpy>=1.23
+opencv-python>=4.7
+mediapipe>=0.10
+scikit-learn>=1.2
+tensorflow>=2.10
+tqdm>=4.65
+matplotlib>=3.6
