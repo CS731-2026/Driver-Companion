@@ -176,12 +176,16 @@ class FaceMeshDetector:
                               used for offline dataset preprocessing).
     static_image_mode=False → RunningMode.VIDEO  (uses internal tracking across
                               frames, used for the real-time webcam demo).
+
+    output_blendshapes=True enables the 52 MediaPipe blendshape coefficients
+    so detect_blendshapes() returns them — needed by the blendshape predictor.
     """
 
     static_image_mode: bool = True
     max_num_faces: int = 1
     min_detection_confidence: float = 0.5
     min_tracking_confidence: float = 0.5
+    output_blendshapes: bool = False
     model_path: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -201,20 +205,28 @@ class FaceMeshDetector:
             min_face_detection_confidence=self.min_detection_confidence,
             min_face_presence_confidence=self.min_detection_confidence,
             min_tracking_confidence=self.min_tracking_confidence,
+            output_face_blendshapes=self.output_blendshapes,
         )
         self._landmarker = mp_vision.FaceLandmarker.create_from_options(options)
 
-    def detect(self, image_rgb: np.ndarray) -> Optional[np.ndarray]:
-        """Return (478, 3) array of normalized landmarks, or None if no face."""
+    def _detect_raw(self, image_rgb: np.ndarray):
+        """Single MediaPipe pass over `image_rgb`; returns the raw result.
+
+        Shared by detect / detect_selected / detect_blendshapes so a single
+        webcam frame triggers at most one MediaPipe call.
+        """
         rgb = np.ascontiguousarray(image_rgb, dtype=np.uint8)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         if self._video:
             # VIDEO mode needs strictly-increasing millisecond timestamps.
             ts = max(self._last_ts + 1, int(time.monotonic() * 1000))
             self._last_ts = ts
-            result = self._landmarker.detect_for_video(mp_image, ts)
-        else:
-            result = self._landmarker.detect(mp_image)
+            return self._landmarker.detect_for_video(mp_image, ts)
+        return self._landmarker.detect(mp_image)
+
+    def detect(self, image_rgb: np.ndarray) -> Optional[np.ndarray]:
+        """Return (478, 3) array of normalized landmarks, or None if no face."""
+        result = self._detect_raw(image_rgb)
         if not result.face_landmarks:
             return None
         face = result.face_landmarks[0]
@@ -233,6 +245,22 @@ class FaceMeshDetector:
             return None
         idx = SELECTED_LANDMARKS if selected is None else selected
         return pts[idx, :2]
+
+    def detect_blendshapes(self, image_rgb: np.ndarray) -> Optional[np.ndarray]:
+        """Return (52,) MediaPipe blendshape coefficients, or None if no face.
+
+        Requires `output_blendshapes=True` at construction time.
+        """
+        if not self.output_blendshapes:
+            raise RuntimeError(
+                "detect_blendshapes called on a detector built without "
+                "output_blendshapes=True; rebuild the detector with that flag."
+            )
+        result = self._detect_raw(image_rgb)
+        if not result.face_blendshapes:
+            return None
+        bs = result.face_blendshapes[0]
+        return np.array([c.score for c in bs], dtype=np.float32)
 
     def close(self) -> None:
         self._landmarker.close()
