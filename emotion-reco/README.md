@@ -1,7 +1,7 @@
 # Driver-Companion Emotion Recognition
 
 PyTorch implementation of **six** facial emotion recognition methods for the
-**CalmWheel** driver-intervention project (COMPSYS 731, Group 10). Methods are
+**CalmWheel** driver-companion project (COMPSYS 731, Group 10). Methods are
 split across two data modalities — *sequential* (CK+, RAVDESS) and
 *static-image* (AffectNet, RAF-DB) — so the design's "train and test on
 facemesh dataset *and* original dataset" comparison can be run side-by-side.
@@ -21,6 +21,38 @@ Methods 1-2 reach 90 %+ on CK+; methods 3-6 typically cap around **55-65 %**
 on AffectNet/RAF-DB — that is the right number for those datasets, not a bug
 (see [About the 60 % ceiling](#about-the-60-ceiling)).
 
+## Results
+
+All runs below were trained on the **CK+ dataset** (`cache/ckplus_static` for
+static-image methods).  Accuracy is the best validation accuracy achieved
+during training (val split = 20 % stratified hold-out).
+
+### Static-image methods (methods 3–5)
+
+| Method | Val acc | Weighted F1 | Params (M) | Epochs | Infer (ms) | FPS |
+|---|---:|---:|---:|---:|---:|---:|
+| EmoNet — dual-stream CNN+MLP | 61.9 % | 0.593 | 0.60 | 35 | 0.77 | 1 307 |
+| Blendshape MLP | 84.1 % | 0.836 | 0.06 | 33 | 0.38 | 2 625 |
+| Blendshape Attention | **87.3 %** | **0.868** | 0.06 | 30 | 0.45 | 2 213 |
+| Geo MLP (122 lm, AU groups) | **93.7 %** | **0.936** | 3.47 | 57 | 0.31 | 3 206 |
+
+> Inference latency measured on a single sample (batch = 1), RTX 3060 Laptop
+> GPU, averaged over 200 runs after 20 warm-up passes.
+
+**Key observations:**
+
+- The **Geo MLP** (122-landmark geometric distance+angle features with AU
+  grouping) matches the paper's reported CK+ accuracy of 93 % and is the
+  fastest model at inference time despite having the most parameters — the
+  large parameter count is driven by the high feature dimensionality
+  (6 456 pairwise features), not deep layers.
+- **Blendshape Attention** outperforms the plain Blendshape MLP by 3.2 pp
+  (87.3 % vs 84.1 %), confirming that the learned per-coefficient attention
+  gate adds meaningful signal.
+- **EmoNet** scores lowest (61.9 %) because the dual-stream CNN head processes
+  a flattened landmark grid rather than raw pixels, limiting the spatial
+  expressiveness of the CNN stream on this small dataset.
+
 ## Setup
 
 ```bash
@@ -31,6 +63,140 @@ Run every command below from inside `emotion-reco/` so the `dataset`,
 `training` and `implementation` packages import correctly. The MediaPipe model
 file (`models/face_landmarker.task`, ~3.8 MB) downloads automatically on first
 use.
+
+---
+
+## Compare all models — end-to-end guide
+
+`training/plot_all_models.py` trains **all six methods** on CK+ and writes a
+single `runs/all_models_accuracy.png` that overlays every model's train and
+val accuracy curve on the same axes.
+
+> **Why CK+?**  The sequential models (ConvLSTM1D, baseline) only work on
+> sequential face-sequence data.  Using CK+ for every method puts all six on
+> the same dataset and makes the comparison fair.
+
+### Step 1 — Get CK+
+
+You need a copy of the CK+ dataset.  Two redistribution formats are supported:
+
+**Option A — full multi-frame archive** (from https://hyper.ai/en/datasets/16471 (Non-Commercial)):
+```bash
+python3 -m dataset.organize_ckplus \
+    --ckplus_root /path/to/CK+_original \
+    --out_root data/ckplus
+```
+
+**Option B — apex-only flattened archive** (e.g. the CS229 mirror):
+```bash
+python3 -m dataset.organize_ckplus_apex \
+    --ck_root /path/to/CK+ \
+    --out_root data/ckplus
+```
+
+Both produce the same folder layout under `data/ckplus/`:
+```
+data/ckplus/
+├── angry/
+│   ├── S005_001/
+│   │   ├── 0001.png
+│   │   └── ...
+│   └── ...
+├── happy/
+└── ...
+```
+
+If you have no dataset at all you can generate synthetic data for a smoke test:
+```bash
+python3 -m dataset.make_synthetic --output cache/synth.npz --sequences_per_class 60
+# then skip Steps 2-4 and pass the right cache flags to plot_all_models (see Step 5)
+```
+
+### Step 2 — Build the static-image cache
+
+Used by EmoNet, Blendshape MLP/Attention, and Geo MLP.
+Takes the apex (last) frame from each CK+ sequence and runs MediaPipe on it.
+
+```bash
+python3 -m dataset.prepare_static_from_sequences \
+    --data_root data/ckplus \
+    --output cache/ckplus_static \
+    --mode both
+```
+
+Output: `cache/ckplus_static/ckplus_train.npz` and `ckplus_val.npz`
+(each containing `landmarks (N, 478, 3)`, `blendshapes (N, 52)`, `labels`).
+
+### Step 3 — Build the ConvLSTM1D cache
+
+Used by the ConvLSTM1D (sequential temporal model).
+
+```bash
+python3 -m dataset.prepare_data \
+    --data_root data/ckplus \
+    --output cache/ckplus.npz \
+    --landmarks 61
+```
+
+Output: `cache/ckplus.npz`  —  `X (N, 4, 2912)` temporal feature sequences.
+
+### Step 4 — Build the baseline cache
+
+Used by BasicNN and OptimizedNN.
+
+```bash
+python3 -m dataset.prepare_baseline \
+    --data_root data/ckplus \
+    --output cache/ckplus_baseline.npz \
+    --landmarks 61
+```
+
+Output: `cache/ckplus_baseline.npz`  —  flat displacement feature vectors.
+
+### Step 5 — Run all models and plot
+
+```bash
+python3 -m training.plot_all_models
+```
+
+This trains each model in turn and saves the combined accuracy plot to
+`runs/all_models_accuracy.png`.  A summary table is printed to stdout.
+
+**Common flags:**
+
+| Flag | Effect |
+|---|---|
+| `--quick` | 3 epochs each — smoke-tests the whole pipeline in ~5 min |
+| `--force` | Retrain even when a model's metrics file already exists |
+| `--plot-only` | Skip training; regenerate the plot from existing metrics |
+| `--skip emonet` | Exclude one method (repeatable) |
+| `--only convlstm` | Run a single method |
+| `--data cache/ckplus_static` | Override the landmark/blendshape data directory |
+| `--convlstm-cache cache/ckplus.npz` | Override the ConvLSTM1D feature cache |
+| `--baseline-cache cache/ckplus_baseline.npz` | Override the baseline feature cache |
+| `--out runs/my_plot.png` | Override output path |
+| `--include-image` | Also run MobileNetV2 (downloads AffectNet from HuggingFace) |
+
+**Method names** for `--skip` / `--only`:
+`emonet`, `blendshape_mlp`, `blendshape_attention`, `geo_static`,
+`convlstm`, `basic_nn`, `optimized_nn`, `image_cnn`
+
+**Outputs** written to `runs/`:
+
+| File | Description |
+|---|---|
+| `all_models_accuracy.png` | Combined train/val accuracy plot |
+| `emonet/emonet_landmark_metrics.json` | EmoNet per-epoch log |
+| `blendshape_mlp/blendshape_mlp_metrics.json` | Blendshape MLP per-epoch log |
+| `blendshape_attn/blendshape_attention_metrics.json` | Blendshape Attention per-epoch log |
+| `geo_static/geo_61_au_metrics.json` | Geo MLP per-epoch log |
+| `*/checkpoints/best.pt` | Best checkpoint for each static model |
+
+The MobileNetV2 image-CNN model is excluded by default because it requires
+downloading AffectNet-HQ (~3 GB) from HuggingFace.  All other methods use
+only the CK+ caches built in Steps 2-4.
+
+---
 
 ## Layout
 
@@ -74,12 +240,12 @@ section below has the details; this table is the cheat sheet.
 
 | # | Train | Test (held-out eval) | Real-time |
 |---|---|---|---|
-| 1 | `python -m training.train --features cache/ckplus.npz --out runs/ckplus` | (5-fold CV is the test; see `runs/ckplus/metrics.json`) | `python -m implementation.realtime --method sequential --model runs/ckplus/fold_best.pt --scaler runs/ckplus/scaler.pkl --labels runs/ckplus/labels.json` |
-| 2 | `python -m training.baseline --features cache/ckplus_baseline.npz --out runs/baseline` | (4-fold CV is the test; see `runs/baseline/results.md`) | n/a (baseline needs neutral+peak — no webcam adapter) |
-| 3 | `python -m training.train_emonet --data cache/ckplus_static --output runs/emonet_ckplus` | append `--eval-only --checkpoint runs/emonet_ckplus/checkpoints/best.pt` | `python -m implementation.realtime --method emonet --model runs/emonet_ckplus/checkpoints/best.pt` |
-| 4 | `python -m training.train_blendshape --data cache/ckplus_static --output runs/blendshape_ckplus --model attention` | append `--eval-only --checkpoint runs/blendshape_ckplus/checkpoints/best.pt` | `python -m implementation.realtime --method blendshape --model runs/blendshape_ckplus/checkpoints/best.pt` |
-| 5 | `python -m training.train_geo_static --data cache/ckplus_static --output runs/geo_static_ckplus` | append `--eval-only --checkpoint runs/geo_static_ckplus/checkpoints/best.pt` | `python -m implementation.realtime --method geo_static --model runs/geo_static_ckplus/checkpoints/best.pt` |
-| 6 | `python -m training.train_image --output runs/image --backbone mobilenet_v2` | append `--eval-only --checkpoint runs/image/checkpoints/best.pt` | `python -m implementation.realtime --method image --model runs/image/checkpoints/best.pt --backbone mobilenet_v2` |
+| 1 | `python3 -m training.train --features cache/ckplus.npz --out runs/ckplus` | (5-fold CV is the test; see `runs/ckplus/metrics.json`) | `python3 -m implementation.realtime --method sequential --model runs/ckplus/fold_best.pt --scaler runs/ckplus/scaler.pkl --labels runs/ckplus/labels.json` |
+| 2 | `python3 -m training.baseline --features cache/ckplus_baseline.npz --out runs/baseline` | (4-fold CV is the test; see `runs/baseline/results.md`) | n/a (baseline needs neutral+peak — no webcam adapter) |
+| 3 | `python3 -m training.train_emonet --data cache/ckplus_static --output runs/emonet_ckplus` | append `--eval-only --checkpoint runs/emonet_ckplus/checkpoints/best.pt` | `python3 -m implementation.realtime --method emonet --model runs/emonet_ckplus/checkpoints/best.pt` |
+| 4 | `python3 -m training.train_blendshape --data cache/ckplus_static --output runs/blendshape_ckplus --model attention` | append `--eval-only --checkpoint runs/blendshape_ckplus/checkpoints/best.pt` | `python3 -m implementation.realtime --method blendshape --model runs/blendshape_ckplus/checkpoints/best.pt` |
+| 5 | `python3 -m training.train_geo_static --data cache/ckplus_static --output runs/geo_static_ckplus` | append `--eval-only --checkpoint runs/geo_static_ckplus/checkpoints/best.pt` | `python3 -m implementation.realtime --method geo_static --model runs/geo_static_ckplus/checkpoints/best.pt` |
+| 6 | `python3 -m training.train_image --output runs/image --backbone mobilenet_v2` | append `--eval-only --checkpoint runs/image/checkpoints/best.pt` | `python3 -m implementation.realtime --method image --model runs/image/checkpoints/best.pt --backbone mobilenet_v2` |
 
 Substitute the dataset cache (`cache/ckplus.npz` → `cache/ravdess.npz`, etc.)
 and the output directory (`runs/ckplus_*`) to switch datasets.
@@ -98,23 +264,23 @@ features.
 ```bash
 # 1. Get a sequential dataset — pick one:
 #    a) RAVDESS (free, downloads from Zenodo; ~1.7 GB for actors 1-3)
-python -m dataset.fetch_ravdess --out_root data/ravdess --actors 1-3
+python3 -m dataset.fetch_ravdess --out_root data/ravdess --actors 1-3
 #    b) CK+ — full multi-frame archive (gated)
-python -m dataset.organize_ckplus --ckplus_root /path/to/ckplus --out_root data/ckplus
+python3 -m dataset.organize_ckplus --ckplus_root /path/to/ckplus --out_root data/ckplus
 #    c) CK+ — flattened apex-only redistribution (e.g. CS229 mirror)
-python -m dataset.organize_ckplus_apex --ck_root /path/to/CK+ --out_root data/ckplus
+python3 -m dataset.organize_ckplus_apex --ck_root /path/to/CK+ --out_root data/ckplus
 #    d) Synthetic — no real data, smoke test only
-python -m dataset.make_synthetic --output cache/synth.npz --sequences_per_class 60
+python3 -m dataset.make_synthetic --output cache/synth.npz --sequences_per_class 60
 
 # 2. Extract geometric features into a cache (.npz)
-python -m dataset.prepare_data --data_root data/ckplus \
+python3 -m dataset.prepare_data --data_root data/ckplus \
     --output cache/ckplus.npz --landmarks 61
 
 # 3. Train with 5-fold cross-validation
-python -m training.train --features cache/ckplus.npz --out runs/ckplus
+python3 -m training.train --features cache/ckplus.npz --out runs/ckplus
 
 # 4. Real-time webcam inference
-python -m implementation.realtime --model runs/ckplus/fold_best.pt \
+python3 -m implementation.realtime --model runs/ckplus/fold_best.pt \
     --scaler runs/ckplus/scaler.pkl --labels runs/ckplus/labels.json
 ```
 
@@ -128,7 +294,7 @@ dict + arch dims + labels + landmark config), per-fold `fold_*.pt`,
 run **all** epochs, set patience ≥ epochs:
 
 ```bash
-python -m training.train --features cache/ckplus.npz --out runs/ckplus \
+python3 -m training.train --features cache/ckplus.npz --out runs/ckplus \
     --epochs 200 --patience 200
 ```
 
@@ -155,10 +321,10 @@ exists on `dataset.prepare_baseline` so method 2 stays comparable.
 
 ```bash
 # Per-dataset 5-fold CV (paper Section 4.1)
-python -m training.benchmark --datasets ckplus=cache/ckplus.npz --out runs/benchmark
+python3 -m training.benchmark --datasets ckplus=cache/ckplus.npz --out runs/benchmark
 
 # Multiple datasets + composite experiments (Section 4.2 — needs >=2 caches)
-python -m training.benchmark \
+python3 -m training.benchmark \
     --datasets ckplus=cache/ckplus.npz oulu_casia_vis=cache/oulu_vis.npz \
                oulu_casia_nir=cache/oulu_nir.npz mmi=cache/mmi.npz \
     --composite --out runs/benchmark
@@ -174,11 +340,11 @@ displacement + plain MLP / decision tree. No official code was released.
 
 ```bash
 # Extract baseline features (neutral + peak displacement)
-python -m dataset.prepare_baseline --data_root data/ckplus \
+python3 -m dataset.prepare_baseline --data_root data/ckplus \
     --output cache/ckplus_baseline.npz --landmarks 61
 
 # 4-fold CV: tuned decision tree, basic MLP, and the paper's "optimized" MLP
-python -m training.baseline --features cache/ckplus_baseline.npz \
+python3 -m training.baseline --features cache/ckplus_baseline.npz \
     --out runs/baseline
 ```
 
@@ -222,16 +388,16 @@ HuggingFace split into a single `.npz`.
 #   landmarks   → train_emonet, train_geo_static
 #   blendshapes → train_blendshape
 #   both        → everything (one MediaPipe pass, larger files)
-python -m dataset.prepare_static --output cache/facemesh_dataset --mode both
+python3 -m dataset.prepare_static --output cache/facemesh_dataset --mode both
 
 # Variant — use the datasets the papers actually use (CK+ + FER-2013)
-python -m dataset.prepare_static_papers --output cache/facemesh_dataset --mode both
+python3 -m dataset.prepare_static_papers --output cache/facemesh_dataset --mode both
 
 # Variant — convert an existing sequential folder (e.g. your local CK+) into
 # a static cache by taking the apex (last) frame of each sequence. Use this
 # when the HuggingFace `ckplus-dataset` mirror is too small (48 x 48) for
 # FaceMesh and you already organized full-res CK+ via organize_ckplus_apex.
-python -m dataset.prepare_static_from_sequences \
+python3 -m dataset.prepare_static_from_sequences \
     --data_root data/ckplus --output cache/ckplus_static --mode both
 ```
 
@@ -251,23 +417,23 @@ contains:
 
 ```bash
 # 3. Dual-stream landmark CNN + geometric-features MLP (DriveEmo-FL adaptation)
-python -m training.train_emonet --data cache/facemesh_dataset --output runs/emonet
+python3 -m training.train_emonet --data cache/facemesh_dataset --output runs/emonet
 
 # 4a. Blendshape MLP (Jakhete & Kulkarni 2024)
-python -m training.train_blendshape --data cache/facemesh_dataset \
+python3 -m training.train_blendshape --data cache/facemesh_dataset \
     --output runs/blendshape_mlp --model mlp
 
 # 4b. Blendshape with per-coefficient attention gate (interpretable variant)
-python -m training.train_blendshape --data cache/facemesh_dataset \
+python3 -m training.train_blendshape --data cache/facemesh_dataset \
     --output runs/blendshape_attn --model attention
 
 # 5. Static-image adaptation of Köksal & Gumus 2025
-python -m training.train_geo_static --data cache/facemesh_dataset \
+python3 -m training.train_geo_static --data cache/facemesh_dataset \
     --output runs/geo_static --landmarks 61
 
 # 6. MobileNetV2 fine-tuned on raw AffectNet+RAF-DB images
 #    (ignores --data; loads from HuggingFace directly)
-python -m training.train_image --output runs/image --backbone mobilenet_v2
+python3 -m training.train_image --output runs/image --backbone mobilenet_v2
 ```
 
 Each run writes to `runs/<name>/`:
@@ -290,22 +456,22 @@ in `--output`.
 
 ```bash
 # Method 3 — EmoNet
-python -m training.train_emonet --data cache/ckplus_static \
+python3 -m training.train_emonet --data cache/ckplus_static \
     --output runs/emonet_ckplus \
     --eval-only --checkpoint runs/emonet_ckplus/checkpoints/best.pt
 
 # Method 4 — Blendshape (works for both --model mlp and attention)
-python -m training.train_blendshape --data cache/ckplus_static \
+python3 -m training.train_blendshape --data cache/ckplus_static \
     --output runs/blendshape_ckplus --model attention \
     --eval-only --checkpoint runs/blendshape_ckplus/checkpoints/best.pt
 
 # Method 5 — Geo static
-python -m training.train_geo_static --data cache/ckplus_static \
+python3 -m training.train_geo_static --data cache/ckplus_static \
     --output runs/geo_static_ckplus \
     --eval-only --checkpoint runs/geo_static_ckplus/checkpoints/best.pt
 
 # Method 6 — Image MobileNetV2
-python -m training.train_image --output runs/image \
+python3 -m training.train_image --output runs/image \
     --backbone mobilenet_v2 \
     --eval-only --checkpoint runs/image/checkpoints/best.pt
 ```
@@ -317,14 +483,14 @@ accuracy / latency / hardware-utilisation comparison:
 
 ```bash
 # Everything — several hours on one GPU
-python -m training.run_all_benchmarks
+python3 -m training.run_all_benchmarks
 
 # Smoke test — 3 epochs each, ~10 min
-python -m training.run_all_benchmarks --quick
+python3 -m training.run_all_benchmarks --quick
 
 # Skip or pick methods by name
-python -m training.run_all_benchmarks --skip blendshape_attention
-python -m training.run_all_benchmarks --only image_mobilenetv2
+python3 -m training.run_all_benchmarks --skip blendshape_attention
+python3 -m training.run_all_benchmarks --only image_mobilenetv2
 ```
 
 The comparison table is built from each method's `*_metrics.json` and printed
@@ -366,9 +532,9 @@ To get those high numbers from the static-image trainers, point them at CK+
 via `prepare_static_papers`:
 
 ```bash
-python -m dataset.prepare_static_papers --datasets ckplus --mode both \
+python3 -m dataset.prepare_static_papers --datasets ckplus --mode both \
     --output cache/facemesh_papers
-python -m training.train_blendshape --data cache/facemesh_papers \
+python3 -m training.train_blendshape --data cache/facemesh_papers \
     --output runs/blendshape_ckplus --model attention
 ```
 
@@ -382,25 +548,25 @@ frames; the four static predictors classify each frame independently.
 
 ```bash
 # Method 1 — ConvLSTM1D (needs scaler + labels from training)
-python -m implementation.realtime --method sequential \
+python3 -m implementation.realtime --method sequential \
     --model runs/ckplus/fold_best.pt \
     --scaler runs/ckplus/scaler.pkl \
     --labels runs/ckplus/labels.json
 
 # Method 3 — EmoNet (landmark CNN + geo MLP)
-python -m implementation.realtime --method emonet \
+python3 -m implementation.realtime --method emonet \
     --model runs/emonet_ckplus/checkpoints/best.pt
 
 # Method 4 — Blendshape (MLP vs attention is auto-detected from the checkpoint)
-python -m implementation.realtime --method blendshape \
+python3 -m implementation.realtime --method blendshape \
     --model runs/blendshape_ckplus/checkpoints/best.pt
 
 # Method 5 — Geo static (landmark distance+angle MLP)
-python -m implementation.realtime --method geo_static \
+python3 -m implementation.realtime --method geo_static \
     --model runs/geo_static_ckplus/checkpoints/best.pt
 
 # Method 6 — MobileNetV2 on raw RGB
-python -m implementation.realtime --method image \
+python3 -m implementation.realtime --method image \
     --model runs/image/checkpoints/best.pt --backbone mobilenet_v2
 ```
 
@@ -416,36 +582,3 @@ neutral reference frame to compute displacement, which doesn't naturally fit a
 single-stream webcam UX.
 
 ---
-
-## Dataset access
-
-| Dataset | Modality | Access |
-|---|---|---|
-| RAVDESS | sequential | free (Zenodo, CC BY-NC-SA 4.0) — `dataset.fetch_ravdess` |
-| CK+ | sequential / static | gated — https://www.jeffcohn.net/Resources/ |
-| Oulu-CASIA | sequential | gated — https://www.oulu.fi/cmvs/node/41319 |
-| MMI | sequential | gated — https://mmifacedb.eu/ |
-| AffectNet-HQ | static | HuggingFace `Piro17/affectnethq` (auto) |
-| RAF-DB | static | HuggingFace `deanngkl/raf-db-7emotions` (auto) |
-| FER-2013 | static | HuggingFace (used by `prepare_static_papers`) |
-
-Each RAVDESS actor zip is ~553 MB; interrupted downloads resume.
-
-## Expected sequential layout
-
-`prepare_data.py` and `prepare_baseline.py` expect one folder per class, each
-holding one sub-folder per sequence of chronologically-ordered frames:
-
-```
-data_root/
-├── anger/
-│   ├── S005_001/
-│   │   ├── 0001.png
-│   │   ├── 0002.png
-│   │   └── ...
-│   └── S010_002/...
-├── happy/
-│   └── ...
-```
-
-Both `fetch_ravdess.py` and `organize_ckplus*.py` produce exactly this layout.
