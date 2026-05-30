@@ -1,0 +1,19 @@
+numpy>=1.23
+opencv-python>=4.7
+mediapipe>=0.10
+scikit-learn>=1.2
+torch>=2.1
+torchvision>=0.16
+tqdm>=4.65
+matplotlib>=3.6
+seaborn>=0.13
+Pillow>=10.0
+
+# HuggingFace datasets — used by the static-image trainers (AffectNet, RAF-DB)
+datasets>=2.14
+huggingface_hub>=0.18
+
+# Optional: hardware telemetry for training/bench_logger.py (psutil is required,
+# nvitop is needed for GPU stats — falls back gracefully if unavailable)
+psutil>=5.9
+nvitop>=1.3

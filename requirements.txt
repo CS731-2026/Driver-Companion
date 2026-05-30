@@ -1,20 +1,38 @@
+# CalmWheel — unified requirements
+# Install: pip install -r requirements.txt
+#
+# App runtime:  all sections below
+# Training only: also needs the "Training / dataset" section
+
+# ── Core ──────────────────────────────────────────────────────
+requests
+python-dotenv
+numpy>=1.23
+
+# ── Computer vision / FER ─────────────────────────────────────
+opencv-python>=4.7
+mediapipe>=0.10
 torch
 torchvision
-numpy
-opencv-python
-Pillow
-tqdm
+scikit-learn>=1.2
 
-# Dataset preprocessing
-mediapipe
+# ── UI ────────────────────────────────────────────────────────
+pillow
+
+# ── TTS ───────────────────────────────────────────────────────
+edge-tts
+pygame
+
+# ── STT ───────────────────────────────────────────────────────
+sounddevice
+faster-whisper
+
+# ── Training / dataset (emotion-reco only) ────────────────────
+tqdm>=4.65
+matplotlib>=3.6
+seaborn
 datasets
 huggingface_hub
 
-# Training + evaluation
-scikit-learn
-matplotlib
-seaborn
-
-# Benchmark logger
-psutil
-nvitop
+# ── Optional ──────────────────────────────────────────────────
+psutil        # hardware monitoring in bench_logger

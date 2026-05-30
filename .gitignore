@@ -1,4 +1,4 @@
-/.vscode
+.vscode/
 /.env
 */datasets
 /datasets
@@ -12,3 +12,13 @@
 __pycache__
 *.arrow
 *.json
+logs/
+*.log
+
+cache/
+data/
+models/
+runs/
+
+response.mp3
+benchmark_results.json
