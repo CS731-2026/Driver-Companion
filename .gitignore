@@ -19,3 +19,6 @@ cache/
 data/
 models/
 runs/
+
+response.mp3
+benchmark_results.json
